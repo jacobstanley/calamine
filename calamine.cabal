@@ -24,6 +24,7 @@ executable calamine
     -- Stackage
     , async
     , bytestring
+    , containers
     , directory
     , filepath
     , http-client

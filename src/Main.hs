@@ -8,11 +8,12 @@ import           Control.Concurrent.Async (mapConcurrently)
 import           Control.Concurrent.STM (TChan, atomically)
 import           Control.Concurrent.STM (newTChanIO, writeTChan, readTChan)
 import qualified Control.Exception as E
-import           Control.Monad (void, forever)
+import           Control.Monad (forM_, void, forever)
 import           Control.Monad.Except (ExceptT, runExceptT)
 import           Control.Monad.Except (MonadError, throwError, catchError)
 import           Control.Monad.Trans (MonadIO, liftIO)
 import qualified Data.ByteString.Lazy.Char8 as L
+import qualified Data.Map as M
 import           Data.Monoid ((<>))
 import           Data.Text (Text)
 import qualified Data.Text as T
@@ -22,6 +23,9 @@ import           System.Directory (createDirectoryIfMissing)
 import           System.FilePath (takeDirectory)
 import           System.IO (hFlush, stderr)
 import           System.IO.Unsafe (unsafePerformIO)
+
+import           Language.JVM.JarReader
+import           Language.JVM.Parser
 
 import           Calamine.Http (Url, http)
 
@@ -33,11 +37,38 @@ main = do
     putStrLn "Calamine"
     rs <- mapConcurrently (runCalamine . get . mavenUrl) deps
     mapM_ summary rs
+
+    (Right j:_) <- mapM (runCalamine . cacheLocationOf . mavenUrl) deps
+    jar <- newJarReader [j]
+
+    --let ks = take 10 (M.keys (unJR jar))
+    let ks = M.keys (unJR jar)
+
+    forM_ ks $ \k -> do
+        (Just cls) <- loadClassFromJar (L.unpack k) jar
+        putStrLn ""
+        putStrLn (className cls)
+        mapM_ (T.putStrLn . fieldSig) (classFields cls)
+        mapM_ (T.putStrLn . methodSig) (classMethods cls)
   where
     summary (Left err) = putStrLn err
     summary (Right bs) = do
       let sz = show (L.length bs `div` 1024)
       putStrLn ("Size = " <> sz <> "K")
+
+fieldSig :: Field -> Text
+fieldSig f = name <> " :: " <> ty
+  where
+    name = T.pack (fieldName f)
+    ty   = T.pack (show (fieldType f))
+
+methodSig :: Method -> Text
+methodSig m = name <> " :: " <> sig
+  where
+    name     = T.pack (methodName m)
+    sig      = T.intercalate " -> " (paramTys ++ [retTy])
+    paramTys = map (T.pack . show) (methodParameterTypes m)
+    retTy    = T.pack (show (methodReturnType m))
 
 ------------------------------------------------------------------------
 
